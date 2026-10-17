@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: masar
+      POSTGRES_USER: masar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-masar-change-me}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - masar-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U masar -d masar"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: postgresql://masar:${POSTGRES_PASSWORD:-local-masar-change-me}@db:5432/masar?schema=public
+      MASAR_LLM_PROVIDER: ${MASAR_LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-6.1-sol}
+      OPENAI_SYNTHESIS_MODEL: ${OPENAI_SYNTHESIS_MODEL:-gpt-6-astra}
+      MASAR_AGENT_CONCURRENCY: ${MASAR_AGENT_CONCURRENCY:-8}
+      MASAR_AGENT_TIMEOUT_MS: ${MASAR_AGENT_TIMEOUT_MS:-10000}
+      MASAR_SYNTHESIS_TIMEOUT_MS: ${MASAR_SYNTHESIS_TIMEOUT_MS:-14000}
+      MASAR_STORAGE_DIR: /app/storage/decks
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - masar-decks:/app/storage/decks
+
+volumes:
+  masar-postgres:
+  masar-decks:

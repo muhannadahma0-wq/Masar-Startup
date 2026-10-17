@@ -1,0 +1,41 @@
+databases:
+  - name: masar-startup-postgres
+    databaseName: masar
+    user: masar
+    plan: free
+    region: frankfurt
+
+services:
+  - type: web
+    name: masar-startup-next
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    buildCommand: npm install --include=dev --no-audit --no-fund && npx prisma generate && npm run build
+    startCommand: npm run start:render
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: masar-startup-postgres
+          property: connectionString
+      - key: MASAR_LLM_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_AGENT_MODEL
+        value: gpt-6.1-sol
+      - key: OPENAI_SYNTHESIS_MODEL
+        value: gpt-6-astra
+      - key: MASAR_AGENT_CONCURRENCY
+        value: "8"
+      - key: MASAR_AGENT_TIMEOUT_MS
+        value: "10000"
+      - key: MASAR_SYNTHESIS_TIMEOUT_MS
+        value: "14000"
+      - key: MASAR_STORAGE_DIR
+        value: storage/decks

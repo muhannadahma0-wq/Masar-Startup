@@ -1,0 +1,295 @@
+// Masar — مخطط PostgreSQL الإنتاجي؛ كتل JSON مخزنة كنص ومتحقق منها عند القراءة.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ————— الهوية والملف —————
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  name             String?
+  passwordHash     String
+  role             String   @default("FOUNDER") // FOUNDER | REVIEWER | ADMIN
+  locale           String   @default("ar")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sessions         Session[]
+  profile          StartupProfile?
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  aiRuns           AiRun[]
+  authoredOpportunities  Opportunity[] @relation("AuthoredOpps")
+  approvedOpportunities  Opportunity[] @relation("ApprovedOpps")
+  oppVersions      OpportunityVersion[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  csrfToken String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model StartupProfile {
+  id         String  @id @default(cuid())
+  userId     String  @unique
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // JSON: ProfileField[] { field, value, source, deckId?, deckVersion?, page?, quote?, confirmedAt }
+  fieldsJson String  @default("[]")
+  updatedAt  DateTime @updatedAt
+
+  founders       Founder[]
+  decks          Deck[]
+  applications   Application[]
+  documents      CompanyDocument[]
+}
+
+model Founder {
+  id          String  @id @default(cuid())
+  profileId   String
+  profile     StartupProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name        String?
+  region      String? // west_bank | gaza | east_jerusalem | inside_48 | diaspora
+  nationality String?
+  isPrimary   Boolean @default(false)
+}
+
+// ————— الفرص —————
+
+model Opportunity {
+  id             String   @id @default(cuid())
+  title          String
+  orgName        String
+  description    String   @default("")
+  status         String   @default("DRAFT") // DRAFT | NEEDS_REVIEW | PUBLISHED | ARCHIVED | REJECTED
+  rejectReason   String?
+  type           String   @default("grant") // grant | accelerator | incubator | competition | fellowship | loan
+  fundingType    String?  // equity | non_equity | convertible | mixed
+  amountMin      Float?
+  amountMax      Float?
+  currency       String   @default("USD")
+  // JSON: string[] — مفاتيح قطاعات
+  sectorsJson    String   @default("[]")
+  stageMin       String?  // idea | prototype | early_revenue | scaling
+  stageMax       String?
+  geography      String   @default("local") // local | regional | international
+  geoPriority    Boolean  @default(false)
+  // JSON: string[] — لغات التقديم: ar | en | both→["ar","en"]
+  languagesJson  String   @default("[\"ar\"]")
+  applicationUrl String?
+  normalizedUrl  String?  @unique
+  sourceType     String   @default("official") // official | trusted_aggregator | other
+  linkCheckState String   @default("ok") // ok | fail_once | fail_twice
+  deadline       DateTime?
+  deadlineTz     String   @default("Asia/Hebron")
+  requiresDocsJson String @default("[]") // JSON: string[] — مستندات مطلوبة
+  verifiedAt     DateTime?
+  currentVersion Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  conditions     Condition[]
+  versions       OpportunityVersion[]
+  applications   Application[]
+  notifications  Notification[]
+  createdById    String?
+  createdBy      User?   @relation("AuthoredOpps", fields: [createdById], references: [id])
+  approvedById   String?
+  approvedBy     User?   @relation("ApprovedOpps", fields: [approvedById], references: [id])
+}
+
+model Condition {
+  id            String   @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  field         String   // مفتاح من FIELD_KEYS (أنواع core)
+  op            String   // eq | neq | in | not_in | gte | lte | between | contains | exists
+  // JSON: القيمة (مصفوفة أو عدد أو نص)
+  valueJson     String
+  mandatory     Boolean  @default(false)
+  ambiguous     Boolean  @default(false)
+  scope         String   @default("any") // any | all — لمؤسسين متعددين
+  sourceWording String?
+  evidenceId    String?
+  evidence      Evidence?  @relation(fields: [evidenceId], references: [id])
+}
+
+model Evidence {
+  id          String   @id @default(cuid())
+  url         String
+  quote       String
+  verifiedAt  DateTime
+  createdAt   DateTime @default(now())
+  conditions  Condition[]
+}
+
+model OpportunityVersion {
+  id            String   @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  // JSON: [{ field, oldValue, newValue }]
+  diffJson      String   @default("[]")
+  changeType    String   @default("non_substantive") // substantive | non_substantive
+  changeCategory String? // deadline | conditions | amount | documents | other
+  reason        String?
+  createdById   String?
+  createdBy     User?    @relation(fields: [createdById], references: [id])
+  createdAt     DateTime @default(now())
+
+  notifications Notification[]
+
+  @@unique([opportunityId, versionNumber])
+}
+
+// ————— العروض —————
+
+model Deck {
+  id             String  @id @default(cuid())
+  profileId      String
+  profile        StartupProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  currentVersion Int     @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  versions       DeckVersion[]
+}
+
+model DeckVersion {
+  id            String   @id @default(cuid())
+  deckId        String
+  deck          Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  fileHash      String
+  fileName      String
+  fileSize      Int
+  fileType      String   // pdf | pptx
+  // PROCESSING | READY | PARTIAL | FAILED_EXTRACTION
+  status        String   @default("PROCESSING")
+  statusMessage String?
+  slideCount    Int      @default(0)
+  pageCount     Int      @default(0)
+  // JSON: Slide[] { index, title, text }
+  slidesJson    String   @default("[]")
+  // JSON: ExtractedField[] { key, value, page, quote, confidence, status, droppedReason? }
+  extractionJson String  @default("[]")
+  // JSON: Claim[] { id, type, value, unit, page, quote, status }
+  claimsJson    String   @default("[]")
+  // JSON: ReadinessReport { criteria: [...], generatedAt }
+  readinessJson String   @default("{}")
+  // JSON: GapReport
+  gapReportJson String   @default("{}")
+  // Review from 20 bounded specialist tasks; never used for formal eligibility.
+  agentReviewJson String @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  suggestions   SlideSuggestion[]
+  aiRuns        AiRun[]
+}
+
+model SlideSuggestion {
+  id              String   @id @default(cuid())
+  deckVersionId   String
+  deckVersion     DeckVersion @relation(fields: [deckVersionId], references: [id], onDelete: Cascade)
+  slideIndex      Int
+  originalText    String   // الأصل لا يُعدَّل أبدًا
+  suggestedText   String
+  reason          String?
+  // JSON: GuardReport { verdict, flags: [{ rule, detail }] }
+  guardReportJson String   @default("{}")
+  // pending | accepted | edited | rejected
+  decision        String   @default("pending")
+  editedText      String?
+  decidedAt       DateTime?
+  createdAt       DateTime @default(now())
+}
+
+// ————— التشغيل —————
+
+model Application {
+  id            String   @id @default(cuid())
+  profileId     String
+  profile       StartupProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  status        String   @default("INTERESTED") // INTERESTED | PREPARING | SUBMITTED | REJECTED | WITHDRAWN
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([profileId, opportunityId])
+}
+
+model CompanyDocument {
+  id        String   @id @default(cuid())
+  profileId String
+  profile   StartupProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  docType   String   // registration_cert | pitch_deck | financials | id_founder | ...
+  status    String   @default("missing") // available | missing | expired
+  source    String?  // يدوي/من العرض/رابط
+  notes     String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, docType])
+}
+
+model Notification {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunityId  String?
+  opportunity    Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  eventType      String    // SUBSTANTIVE_CHANGE | STATUS_CHANGE | DEADLINE_SOON | NEW_OPPORTUNITY
+  versionNumber  Int       @default(0)
+  payloadJson    String    @default("{}")
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  version        OpportunityVersion? @relation(fields: [versionId], references: [id])
+  versionId      String?
+
+  @@unique([userId, opportunityId, eventType, versionNumber])
+}
+
+model AiRun {
+  id               String   @id @default(cuid())
+  purpose          String   // EXTRACTION | SUGGESTION | DRAFT_FROM_URL
+  provider         String   // glm | mock-replay
+  model            String
+  modelVersion     String?
+  promptFingerprint String
+  inputTokens      Int?
+  outputTokens     Int?
+  latencyMs        Int?
+  success          Boolean  @default(true)
+  errorCode        String?
+  deckVersionId    String?
+  deckVersion      DeckVersion? @relation(fields: [deckVersionId], references: [id], onDelete: SetNull)
+  userId           String?
+  user             User?    @relation(fields: [userId], references: [id])
+  createdAt        DateTime @default(now())
+  // لا نص خام هنا إطلاقًا (سياسة الخطة)
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String   // e.g. OPPORTUNITY_PUBLISHED, PROFILE_FIELD_CONFIRMED
+  entityType  String
+  entityId    String
+  detailsJson String   @default("{}")
+  createdAt   DateTime @default(now())
+}
